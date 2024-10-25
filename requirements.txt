@@ -1,0 +1,22 @@
+langchain_core
+python-dotenv
+streamlit
+langchain_community
+langserve
+fastapi
+uvicorn
+sse_starlette
+bs4
+pyPDF
+docx2txt
+chromadb
+faiss-cpu
+langchain-ollama
+langchain-pinecone 
+pinecone-notebooks
+nltk
+## Libraries Required
+langchain-huggingface
+## For API Calls
+huggingface_hub
+transformers
