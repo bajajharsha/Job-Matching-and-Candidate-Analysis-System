@@ -52,25 +52,28 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # Function to handle API call
 def api_call(resume_file, jd_files):
-    api_url = "http://0.0.0.0:8000/upload/"  # Replace with your actual API endpoint
+    api_url = "http://0.0.0.0:8001/upload/"  # Replace with your actual API endpoint
     files = {}
 
-    # Add resume to the files dictionary
-    if resume_file is not None:
-        # send bytes of the file
-        files['resume'] = (resume_file.name, resume_file.getvalue(), 'application/pdf')
-        
-    with open(resume_file.name, 'rb') as resume_file:
-        files = {
-            'resume': (resume_file.name, resume_file.read()),  # Send resume as bytes
-        }
+    # Process resume
+    if resume_file is not None:     
+        if resume_file.type == 'application/pdf':
+            files['resume'] = (resume_file.name, resume_file.getvalue(), 'application/pdf')
+        elif resume_file.type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+            files['resume'] = (resume_file.name, resume_file.getvalue(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        else:
+            raise ValueError("Unsupported file type. Please upload a PDF or DOCX file.")
 
-    # Add job descriptions to the files dictionary
-    # if jd_files is not None:
-    #     for i, jd_file in enumerate(jd_files):
-    #         files[f'job_description_{i}'] = (jd_file.name, jd_file.getvalue(), 'text/plain')
+    # Process job description
+    if jd_files is not None:
+        for jd_file in jd_files:
+            if jd_file.type == 'text/plain':
+                files['jds'] = (jd_file.name, jd_file.getvalue(), 'text/plain')
+            elif jd_file.type == 'application/json':
+                files['jds'] = (jd_file.name, jd_file.getvalue(), 'application/json')
+            else:
+                raise ValueError("Unsupported file type. Please upload a TXT or JSON file.")
     
-    print(files)
     # Make the API request
     response = requests.post(api_url, files=files)
     
@@ -78,22 +81,10 @@ def api_call(resume_file, jd_files):
 
 if st.button("MATCH", key="match_button"):
     if uploaded_resume and uploaded_jd:
-        # print("resume uploaded", uploaded_resume)
-        response = api_call(uploaded_resume, uploaded_jd)
-        # print(response)
-        # response = requests.post(api_url, files=files)
-
-        if response.status_code == 200:
-            # Handle successful response
-            st.success("Matching process completed successfully!")
-            st.json(response.json())  # Display response from the API
-        # else:
-        #     st.error(f"Error during matching process: {response.text}")
-
         st.success("Matching process initiated! Please wait...")
-        # Add your API call logic here
+        response = api_call(uploaded_resume, uploaded_jd)
+        if response.status_code == 200:
+            st.success("Matching process completed successfully!")
+            st.json(response.json())
     else:
         st.warning("Please upload both a resume and a job description before matching.")
-
-def api_call():
-    pass
