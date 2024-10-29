@@ -10,3 +10,4 @@ pinecone-notebooks
 jq
 chromadb
 langchain_community
+openai==0.28

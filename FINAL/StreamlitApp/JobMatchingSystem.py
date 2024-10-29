@@ -52,7 +52,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # Function to handle API call
 def api_call(resume_file, jd_files):
-    api_url = "http://0.0.0.0:8001/upload/"  # Replace with your actual API endpoint
+    api_url = "http://0.0.0.0:8002/upload/"  # Replace with your actual API endpoint
     files = {}
 
     # Process resume
@@ -85,6 +85,6 @@ if st.button("MATCH", key="match_button"):
         response = api_call(uploaded_resume, uploaded_jd)
         if response.status_code == 200:
             st.success("Matching process completed successfully!")
-            st.json(response.json())
+            st.json(response)
     else:
         st.warning("Please upload both a resume and a job description before matching.")

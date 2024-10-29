@@ -125,20 +125,6 @@ def add_to_vector_store(index, text_data):
             )
         )
     index.upsert(vectors=upserted_data)  # Removed namespace parameter
-def add_to_vector_store_both(index, resumes, job_descriptions):
-    """Adds documents to the Pinecone vector store. Embeddings are created here as well"""
-    upserted_data = []
-    # Prepare upsert data for resumes
-    upserted_data = []
-    for i, resume in enumerate(resumes):
-        embedding = model.encode(resume).tolist()
-        upserted_data.append((f"resume-{i}", embedding, {"content": resume}))
-
-    # Prepare upsert data for job descriptions
-    for i, job in enumerate(job_descriptions):
-        embedding = model.encode(job).tolist()
-        upserted_data.append((f"job-{i}", embedding, {"content": job}))
-
 
 def perform_similarity_search(index, query_em):
     """Performs a similarity search in Pinecone."""
@@ -148,18 +134,18 @@ def perform_similarity_search(index, query_em):
 
 def openAI(result, query):
     system_role = (
- 
-    "Answer the question as truthfully as possible using the provided context, "
-    "and if the answer is not contained within the text and requires some latest information to be updated, "
-    "print 'Sorry Not Sufficient context to answer query' \n"
+ """
+    You are an advanced AI assistant designed to help users with a job matching system. 
+    Your task is to analyze the user's resume and the uploaded job descriptions to determine the best job fit. And provide which is the best job description that matches the user's resume.
 
+    """
     )
 
     # Check if there are matches in the result
     if result['matches']:
         context = [match['metadata']['content'] for match in result['matches']]
         context_str = '\n'.join(context) 
-        user_input = context_str + '\n' + "What job matches this resume?" + '\n'
+        user_input = context_str + '\n' + query + '\n'
 
         gpt4_response = openai.ChatCompletion.create(
             model="gpt-4",
@@ -186,17 +172,17 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF or DOCX file.")
     
-    
+        
     # Chunk the resume text
-    # chunked_resume_documents = chunk_text(resume_documents)
-    # logging.info("Chunked resume text." + str(type(chunked_resume_documents)))
+    chunked_resume_documents = chunk_text(resume_documents)
+    logging.info("Chunked resume text." + str(type(chunked_resume_documents)))
     
     # Prepare text data for embedding and vector store
-    resume_texts = [doc.page_content for doc in resume_documents] 
+    resume_texts = [doc.page_content for doc in chunked_resume_documents] 
 
     # Initialize Pinecone and add resume to vector store
     resume_index = initialize_pinecone()
-    # add_to_vector_store(resume_index, resume_texts)  # Embeddings are created here
+    add_to_vector_store(resume_index, resume_texts)  # Embeddings are created here
     # return JSONResponse(content={"detail": "Success"})
     # Extract from job descriptions
     all_jd_documents = []
@@ -211,29 +197,23 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
         all_jd_documents.extend(jd_documents)  # Extend to combine text from all job descriptions
 
     # Chunk job descriptions
-    # chunked_jd_documents = chunk_text(all_jd_documents)
+    chunked_jd_documents = chunk_text(all_jd_documents)
 
     # Prepare text data for embedding and vector store
-    # jd_texts = [doc.page_content for doc in jd_documents]
-    jd_texts = [
-    "Software Engineer - Full Stack\nWe are seeking a Full Stack Software Engineer with a strong background in both frontend and backend development. Required skills include Python, JavaScript, and experience with Django or similar frameworks. Familiarity with cloud services like AWS is a plus. You will work on building scalable web applications in a collaborative team environment.",
-    "Data Analyst\nSeeking a Data Analyst with expertise in data visualization and analytics. Required skills include SQL, Python, and experience with data visualization tools like Tableau or Power BI. Candidates should be able to analyze large datasets and create actionable insights for business growth. Experience in machine learning is preferred."
-]
-
+    jd_texts = [doc.page_content for doc in chunked_jd_documents]
 
     # Add job descriptions to the same Pinecone index
-    add_to_vector_store_both(resume_index, resume_texts, jd_texts)  # Store in the same index
+    add_to_vector_store(resume_index, jd_texts)  # Store in the same index
     
-    # return JSONResponse(content={"detail": "Success"})
+    return JSONResponse(content={"detail": "Success"})
 
     # Perform similarity search
-    # query = "Based on the resume what is the current role of the user?"
-    query_resume = resume_texts[0]  # Using the first resume as the query
-    query_em = model.encode(query_resume).tolist()
+    query = "Based on the resume what is the current role of the user?"
+    query_em = model.encode(query).tolist()
     
     result = perform_similarity_search(resume_index,query_em)  # Query from the same index
     
-    finalResult = openAI(result,query_resume)
+    finalResult = openAI(result,query)
     logging.info("Final Result: " + str(finalResult))
     # return JSONResponse(content={"detail": result})
     
