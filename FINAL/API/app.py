@@ -15,17 +15,17 @@ import json
 import logging.config
 from langchain_core.documents import Document  # Assuming you have this import from langchain_core
 import openai
-
-# Load logging configuration
-with open("FINAL/API/logging_config.json", "r") as file:
-    config = json.load(file)
-    logging.config.dictConfig(config)
+import google.generativeai as genai
+import json
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
 os.environ['LANGCHAIN_API_KEY'] = os.getenv("LANGCHAIN_API_KEY")
 pinecone_api_key = os.environ.get("PINECONE_API_KEY")
-openai.api_key = os.getenv("OPENAI_API_KEY")  # Make sure to set your OpenAI API key
 
 app = FastAPI(
     title="Job Matching API",
@@ -34,11 +34,8 @@ app = FastAPI(
 )
 
 # Create directory for uploads
-UPLOAD_DIR = Path.home() / "uploads"
+UPLOAD_DIR = Path("/home/harsha/Desktop/projectuploadedFiles")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-# Initialize the embedding model
-model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def save_file(file: UploadFile) -> Path:
     """Saves an uploaded file to the designated directory and returns its path."""
@@ -77,19 +74,36 @@ def extract_from_json(resume: UploadFile):
     resume_documents = json_loader.load()
     return resume_documents
 
-def chunk_text(documents):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    documents = text_splitter.split_documents(documents)
-    return documents
+def processUploadedFiles(document_text, document_type):
+    logging.info("Processing uploaded files using NLP.")
+    """Generate a structured output for resumes or job descriptions using Google Gemini."""
+    genai.configure(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
+    
+    prompt = f"""
+    You are a highly advanced language model capable of understanding and analyzing {document_type}. Your task is to process the following plain text {document_type} and identify the different sections, categorizing them accordingly. The sections we are interested in are:
 
-def create_embedding(document_texts):
-    embeddings = model.encode(document_texts)
-    logging.info("Type of embeddings: " + str(type(embeddings)))
-    return embeddings.tolist()
+    1. **Personal Information**: For resumes only—Name, contact details, and any relevant links.
+    2. **Summary or Objective**: A brief overview of the candidate’s career goals (for resumes) or the role’s objectives (for JDs).
+    3. **Skills**: A list of relevant skills, including technical and soft skills.
+    4. **Experience**: Work history including job titles, companies, duration of employment (for resumes) or required experience (for JDs).
+    5. **Education**: Academic qualifications including degrees, institutions, and years of graduation (for resumes) or required qualifications (for JDs).
+    6. **Certifications**: Any relevant certifications (for resumes) or preferred qualifications (for JDs).
+    7. **Responsibilities**: Specific job responsibilities (for JDs only).
+
+    Please structure the output in a clear pure python nested dictionary format only and extra keywords without the "python" prefix and do not add lists into the format, with each section labeled accordingly. If a section is not present in the document, simply omit it from the python nested dictionary output.
+
+    Here is the {document_type} text to analyze:
+    {document_text}
+    """
+    
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(prompt)
+    # logging.info("Generated output: %s", response.text)
+    return response.text
 
 def initialize_pinecone():
     """Initializes the Pinecone client and ensures the index exists."""
-    pc = Pinecone(api_key=pinecone_api_key)
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 
     # Create index if it does not exist
     if 'job-matching' not in [index.name for index in pc.list_indexes()]:
@@ -103,84 +117,224 @@ def initialize_pinecone():
         )
     return pc.Index("job-matching")  # Removed namespace parameter
 
-def delete_index_if_exists(index_name: str):
-    """Delete the index if it exists."""
-    pc = Pinecone(api_key=pinecone_api_key)
-    if index_name in [index.name for index in pc.list_indexes()]:
-        pc.delete_index(index_name)
-        logging.info(f"Deleted index: {index_name}")
+def store_in_pinecone(document, document_type):
+    """Store sections in Pinecone for both job descriptions and resumes."""
+    
+    # Initialize the embedding model
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    
+    index = initialize_pinecone()  # Ensure the index is initialized
+    logging.info("Created Pinecone index for document matching.")
+    embeddings_data = []
+    logging.info("resume sections: " + str(document))
+    cleaned_string = document[9:-3]
 
-def add_to_vector_store(index, text_data):
-    """Adds documents to the Pinecone vector store. Embeddings are created here as well"""
-    upserted_data = []
-    for i, item in enumerate(text_data):
-        id = index.describe_index_stats()['total_vector_count']
-        upserted_data.append(
-            (
-                f"doc-{str(id + i)}",  # Create unique IDs without namespace
-                model.encode(item).tolist(),
-                {
-                    'content': item
-                }
-            )
-        )
-    index.upsert(vectors=upserted_data)  # Removed namespace parameter
-def add_to_vector_store_both(index, resumes, job_descriptions):
-    """Adds documents to the Pinecone vector store. Embeddings are created here as well"""
-    logging.info("Adding resumes and job descriptions to the vector store.")
-    upserted_data = []
-    # Prepare upsert data for resumes
-    upserted_data = []
-    for i, resume in enumerate(resumes):
-        embedding = model.encode(resume).tolist()
-        upserted_data.append((f"resume-{i}", embedding, {"content": resume}))
+    # Check if the document is a JD or a resume
+    if document_type.lower() == "job description":
+        # Assuming document is in JSON format similar to your example
+        sections = json.loads(cleaned_string)  # Load JSON from the document
 
-    # Prepare upsert data for job descriptions
-    for i, job in enumerate(job_descriptions):
-        embedding = model.encode(job).tolist()
-        upserted_data.append((f"job-{i}", embedding, {"content": job}))
+        # Loop through each JD section
+        for jd_name, jd_sections in sections.items():
+            logging.info(f"Processing Job Description: {jd_name}")
+            for section_key, section_value in jd_sections.items():
+                # logging.info(f"Processing section: {section_key}")
+                # logging.info(f"Section content: {section_value}")
+                
+                # Create a unique ID for each section
+                section_id = f"jd-{jd_name.lower().replace(' ', '-')}-{section_key.lower().replace(' ', '-')}-{str(uuid4())}"
+                
+                # Convert the section to JSON string for storage
+                section_content = json.dumps({section_key: section_value})
+
+                # Generate embeddings for the section content
+                embedding = model.encode(section_content).tolist()
+
+                # Prepare data for upsert
+                embeddings_data.append((section_id, embedding, {
+                    "content": section_content,
+                    "document_type": document_type,
+                    "section_name": section_key,
+                    "doc_name": jd_name
+                }))
+
+    elif document_type.lower() == "resume":
+        # Assuming the resume is structured similarly to the JD
+        sections = json.loads(cleaned_string)  # Load JSON from the document
+
+        # Loop through each section of the resume
+        logging.info(f"Processing Resume")
+        for section_key, section_value in sections.items():
+            logging.info(f"Processing section: {section_key}")
+            logging.info(f"Section content: {section_value}")
+
+            # Create a unique ID for each section
+            section_id = f"resume-{section_key.lower().replace(' ', '-')}-{str(uuid4())}"
+            
+            # Convert the section to JSON string for storage
+            section_content = json.dumps({section_key: section_value})
+
+            # Generate embeddings for the section content
+            embedding = model.encode(section_content).tolist()
+
+            # Prepare data for upsert
+            embeddings_data.append((section_id, embedding, {
+                "content": section_content,
+                "document_type": document_type,
+                "section_name": section_key
+            }))
+
+    # Upsert the vectors to the Pinecone index
+    index.upsert(vectors=embeddings_data)
+    logging.info(f"Stored {len(embeddings_data)} sections in Pinecone for {document_type}.")
+
+def find_best_job_match(resume_sections):
+    """Find the best job match for a given resume."""
+    index = initialize_pinecone()  # Ensure the index is initialized
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    
+    cleaned_string = resume_sections[9:-3]
+    logging.info("resume sections: " + str(cleaned_string))
+    sections = eval(cleaned_string)  # Load JSON from the document
+    
+    final_result = {}
+    
+    # Loop through each section of the resume
+    for section_key, section_value in sections.items():
+        logging.info(f"Processing section: {section_key}")
+        logging.info(f"Section content: {section_value}")
+
+        # Create a unique ID for each section
+        section_id = f"resume-{section_key.lower().replace(' ', '-')}-{str(uuid4())}"
         
-    index.upsert(vectors=upserted_data)
+        # Convert the section to JSON string for storage
+        section_content = json.dumps({section_key: section_value})
 
+        # Generate embeddings for the section content
+        query_embedding = model.encode(section_content).tolist()
+        result = index.query(vector=query_embedding, top_k=5, include_metadata=True)
+        
+        # Store results in final_result with section ID as the key
+        final_result[section_id] = {
+            "section": section_key,
+            "matches": result['matches']  # Store the top matching results for the section
+        }
+        
+        # logging.info("final result: " + str(final_result))        
+        
+    return final_result
 
-def perform_similarity_search(index, query_em):
-    """Performs a similarity search in Pinecone."""
-    result = index.query(vector=query_em, top_k=5, include_metadata=True)
-    logging.info("Result: " + str(result))
-    return result
+def finalLLM(context):
+    logging.info("Final processing for output")
+    genai.configure(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
+    
+    prompt = f"""
+    You are an advanced AI model specialized in evaluating the alignment between a candidate’s resume and a job description. 
+    Using the provided context below, generate a detailed, frontend-ready analysis to show why a candidate is a good fit for the role. 
+    The output should be structured with easy-to-read headings and descriptions in each category (Skill Match, Experience Match, 
+    Education Fit, and Technological Fit).
 
-def openAI(result, query):
-    system_role = (
- 
-    "Answer the question as truthfully as possible using the provided context, "
-    "and if the answer is not contained within the text and requires some latest information to be updated, "
-    "print 'Sorry Not Sufficient context to answer query' \n"
+    The format should be in structured JSON for direct frontend display, with clear labels and explanations for each section:
 
-    )
+    1. **Skill Match**: Provide a percentage indicating the overlap between required skills in the job description and those 
+       in the candidate’s resume. Include a list of matched skills and missing skills, with labels to make it readable on a 
+       frontend display.
+    2. **Experience Match**: 
+       - Calculate and present the overall relevance percentage of the candidate's experience to the job’s requirements.
+       - List each relevant job, showing the job title, relevance score, and a brief explanation of the overlap in responsibilities.
+       - Include a list of job responsibilities that match those required by the role.
+    3. **Education Fit**: 
+       - Provide a match percentage for education, indicating how well the candidate’s educational background aligns with 
+         the job’s requirements.
+       - List matched and missing qualifications with brief descriptions where necessary.
+    4. **Technological Fit**: 
+       - Present a percentage score indicating the overlap between required and possessed technologies.
+       - List matched technologies and missing technologies, if any.
 
-    # Check if there are matches in the result
-    if result['matches']:
-        context = [match['metadata']['content'] for match in result['matches']]
-        context_str = '\n'.join(context) 
-        user_input = context_str + '\n' + "What job matches this resume?" + '\n'
+    Output the information in the following structured JSON format for direct frontend display:
 
-        gpt4_response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_role},
-                {"role": "user", "content": user_input}
-            ]
-        )
-        return gpt4_response
-    else:
-        return "No matches found."
+    {{
+        "Skill Match": {{
+            "matchPercentage": "X%",
+            "description": "Percentage of required skills possessed by the candidate.",
+            "matchedSkills": {{
+                "label": "Matched Skills",
+                "skills": ["Skill 1", "Skill 2", "..."]
+            }},
+            "missingSkills": {{
+                "label": "Missing Skills",
+                "skills": ["Skill 3", "Skill 4", "..."]
+            }}
+        }},
+        "Experience Match": {{
+            "overallRelevance": {{
+                "percentage": "X%",
+                "description": "Overall relevance of the candidate's experience to the job."
+            }},
+            "relevantExperience": {{
+                "label": "Relevant Past Experience",
+                "jobs": [
+                    {{
+                        "jobTitle": "Title 1",
+                        "relevance": "X%",
+                        "details": "Explanation of relevance."
+                    }},
+                    {{
+                        "jobTitle": "Title 2",
+                        "relevance": "Y%",
+                        "details": "Explanation of relevance."
+                    }}
+                ]
+            }},
+            "responsibilityOverlap": {{
+                "label": "Matched Responsibilities",
+                "responsibilities": ["Responsibility 1", "Responsibility 2", "..."]
+            }}
+        }},
+        "Education Fit": {{
+            "matchPercentage": "X%",
+            "description": "Percentage indicating how well the candidate’s education aligns with the job requirements.",
+            "matchedQualifications": {{
+                "label": "Matched Qualifications",
+                "qualifications": ["Qualification 1", "Qualification 2", "..."]
+            }},
+            "missingQualifications": {{
+                "label": "Missing Qualifications",
+                "qualifications": ["Qualification 3"]
+            }}
+        }},
+        "Technological Fit": {{
+            "matchPercentage": "X%",
+            "description": "Percentage of required technologies that the candidate is familiar with.",
+            "matchedTechnologies": {{
+                "label": "Matched Technologies",
+                "technologies": ["Technology 1", "Technology 2", "..."]
+            }},
+            "missingTechnologies": {{
+                "label": "Missing Technologies",
+                "technologies": ["Technology 3"]
+            }}
+        }},
+        "BestJobMatch": {{
+            The bestt job match based on the analysis
+        }}
+    }}
+    
+    FInally give a detailed and on point note on which job description the resume is best suited for based on the analysis in the json itself.
+    The final ouptput should be in JSON format only and no extra keywords should be added to the format. 
 
+    Context: {context}
+    """
+
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(prompt)
+    logging.info("Generated final output: %s", response.text)
+    return response.text
 
 @app.post("/upload/")
 async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = File(...)):
-    
     logging.info("Upload the files.")
-
+    
     # Extract from resume
     if resume.content_type == 'application/pdf':
         resume_documents = extract_from_pdf(resume)
@@ -188,22 +342,7 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
         resume_documents = extract_from_docx(resume)
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF or DOCX file.")
-    
-    
-    # Chunk the resume text
-    chunked_resume_documents = chunk_text(resume_documents)
-    logging.info("Chunked resume text." + str(type(chunked_resume_documents)))
-    
-    # Prepare text data for embedding and vector store
-    resume_texts = [doc.page_content for doc in resume_documents] 
-    logging.info("Resume text: " + str(resume_texts))
-
-    # Initialize Pinecone and add resume to vector store
-    index = initialize_pinecone()
-    logging.info("Pinecone initialized.")
-    # add_to_vector_store(resume_index, resume_texts)  # Embeddings are created here
-    # return JSONResponse(content={"detail": "Success"})
-    # Extract from job descriptions
+ 
     all_jd_documents = []
     for jd in jds:
         if jd.content_type == 'text/plain':
@@ -214,39 +353,34 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
             raise HTTPException(status_code=400, detail="Unsupported job description file type.")
         
         all_jd_documents.extend(jd_documents)  # Extend to combine text from all job descriptions
-
-    # Chunk job descriptions
-    chunked_jd_documents = chunk_text(all_jd_documents)
-
-    # Prepare text data for embedding and vector store
-    jd_texts = [doc.page_content for doc in all_jd_documents]
-    # jd_texts = ""
-    logging.info("Job description text: " + str(jd_texts))
-
-    # Add job descriptions to the same Pinecone index
-    add_to_vector_store_both(index, resume_texts, jd_texts)  # Store in the same index
+        
+        jd_texts = " ".join(doc.page_content for doc in all_jd_documents)
+        jd_sections = processUploadedFiles(jd_texts, document_type="job description")
+        # logging.info("Job description sections: " + str(jd_sections))
     
-    # return JSONResponse(content={"detail": "Success"})
+    # Store job description sections in Pinecone
+    store_in_pinecone(jd_sections, document_type="job description")
+    
+    resume_text = " ".join(doc.page_content for doc in resume_documents)
+    resume_sections = processUploadedFiles(resume_text, document_type="resume")
+    # logging.info("Resume sections: " + str(resume_sections))
+    
+    # Store resume sections in Pinecone
+    # store_in_pinecone(resume_sections, document_type="resume")
+    
+    # Perform query to find the best job match
+    context= find_best_job_match(resume_sections)
+    
+    # call final llm
+    final_output = finalLLM(context)
+    
+    return JSONResponse(content={"detail": final_output[7:-3]})    
 
-    # Perform similarity search
-    # query = "Based on the resume what is the current role of the user?"
-    query_resume = resume_texts[0]  # Using the first resume as the query
-    logging.info("Query resume: " + str(query_resume))
-    query_em = model.encode(query_resume).tolist()
-    
-    result = perform_similarity_search(index,query_em)  # Query from the same index
-    
-    finalResult = openAI(result,query_resume)
-    logging.info("Final Result: " + str(finalResult))
-    # return JSONResponse(content={"detail": result})
     
 
-    # Delete indices after processing the request (optional)
-    delete_index_if_exists("job-matching")
-    
-    return finalResult
 
 if __name__ == "__main__":
     uvicorn.run(app,
         host="0.0.0.0",
         port=8002)
+
