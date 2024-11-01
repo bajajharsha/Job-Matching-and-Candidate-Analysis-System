@@ -49,7 +49,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # Function to handle API call
 def api_call(resume_file, jd_files):
-    api_url = "http://0.0.0.0:8002/upload/"  # Replace with your actual API endpoint
+    api_url = "http://0.0.0.0:8001/upload/"  # Replace with your actual API endpoint
     files = {}
 
     # Process resume

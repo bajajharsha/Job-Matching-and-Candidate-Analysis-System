@@ -16,7 +16,6 @@ import logging.config
 from langchain_core.documents import Document  # Assuming you have this import from langchain_core
 import openai
 import google.generativeai as genai
-import json
 
 # Load environment variables
 load_dotenv()
@@ -404,6 +403,7 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF or DOCX file.")
  
+    # Extract from Job Descriptions
     all_jd_documents = []
     for jd in jds:
         if jd.content_type == 'text/plain':
@@ -414,32 +414,27 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
             raise HTTPException(status_code=400, detail="Unsupported job description file type.")
         
         all_jd_documents.extend(jd_documents)  # Extend to combine text from all job descriptions
-    
-    logging.info("ALL jds:::: " , all_jd_documents)
-    
+        
     jd_texts = " ".join(doc.page_content for doc in all_jd_documents)
     jd_sections = processUploadedFiles(jd_texts, document_type="job description")
-    # logging.info("Job description sections: " + str(jd_sections))
+
     # Store job description sections in Pinecone
     store_in_pinecone(jd_sections, document_type="job description")
     
     resume_text = " ".join(doc.page_content for doc in resume_documents)
     resume_sections = processUploadedFiles(resume_text, document_type="resume")
-    # logging.info("Resume sections: " + str(resume_sections))
-    
-    # Store resume sections in Pinecone
-    # store_in_pinecone(resume_sections, document_type="resume")
     
     # Perform query to find the best job match
-    context= find_best_job_match(resume_sections)
+    context = find_best_job_match(resume_sections)
     
-    # call final llm
+    # Call final llm
     final_output = finalLLM(context)
     final_result = json.loads(final_output[7:-3])
     
     # Delete pinecone index after processing the request 
     delete_index_if_exists("job-matching")
-    # os.remove(file_location)
+    # os.rmdir(file_location)
+    # shutil.rmtree(file_location)
     
     return final_result
     
