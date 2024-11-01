@@ -73,6 +73,7 @@ def api_call(resume_file, jd_files):
                 st.error("Unsupported job description file type. Please upload a TXT or JSON file.")
                 return None
     
+    # st.write("Payload::: " , files)
     # Make the API request
     try:
         response = requests.post(api_url, files=files)
@@ -104,26 +105,37 @@ if st.button("MATCH", key="match_button"):
             response = api_call(uploaded_resume, uploaded_jd)
             if response and response.status_code == 200:
                 st.success("Matching process completed successfully!")
-                
+
                 # Extracting JSON string from the response object
-                response_str = response.text  # Use .text to get the response content as a string
-                
-                # Now parse the JSON string
-                res = eval(response_str)
-                
-                st.json(res)
-                response_json = res["detail"]
-                st.write(response_json["Skill Match"])
+                response_json = response.json()  # Use .json() to get the response content as a dictionary
+
                 # Displaying structured response
                 st.header("Matching Results")
                 
+                # Best Job Match Section
+                best_fit = response_json.get("BestJobMatch", {})
+                st.subheader("Best Job Match")
+                if best_fit:
+                    st.write(f"**Job Description**: {best_fit.get('jobDescription', 'N/A')}")
+                    st.write(f"**Reason**: {best_fit.get('reason', 'N/A')}")
+
+                    # Analytics for Best Job Match
+                    analytics = best_fit.get("analytics", {})
+                    if analytics:
+                        st.subheader("Analytics")
+                        st.write("**Skills Analysis**: " + analytics.get('skillsAnalysis', 'N/A'))
+                        st.write("**Experience Analysis**: " + analytics.get('experienceAnalysis', 'N/A'))
+                        st.write("**Education Analysis**: " + analytics.get('educationAnalysis', 'N/A'))
+                        st.write("**Technology Analysis**: " + analytics.get('technologyAnalysis', 'N/A'))
+                else:
+                    st.write("None")
+
                 # Skill Match Section
-                skill_match = response_json["Skill Match"] | {}
                 skill_match = response_json.get("Skill Match", {})
                 st.subheader("Skill Match")
                 st.write(f"**Match Percentage**: {skill_match.get('matchPercentage', 'N/A')}")
                 st.write(f"**Description**: {skill_match.get('description', 'N/A')}")
-                
+
                 matched_skills = skill_match.get("matchedSkills", {}).get("skills", [])
                 missing_skills = skill_match.get("missingSkills", {}).get("skills", [])
                 
@@ -135,8 +147,8 @@ if st.button("MATCH", key="match_button"):
                 # Experience Match Section
                 experience_match = response_json.get("Experience Match", {})
                 st.subheader("Experience Match")
-                overall_relevance = experience_match.get("overallRelevance", {}).get("percentage", "N/A")
-                st.write(f"**Overall Relevance**: {overall_relevance}")
+                overall_relevance = experience_match.get("overallRelevance", {})
+                st.write(f"**Overall Relevance**: {overall_relevance.get('percentage', 'N/A')}")
                 
                 relevant_jobs = experience_match.get("relevantExperience", {}).get("jobs", [])
                 if relevant_jobs:
@@ -156,15 +168,21 @@ if st.button("MATCH", key="match_button"):
                 education_fit = response_json.get("Education Fit", {})
                 st.subheader("Education Fit")
                 st.write(f"**Match Percentage**: {education_fit.get('matchPercentage', 'N/A')}")
+                st.write(f"**Description**: {education_fit.get('description', 'N/A')}")
+
                 matched_qualifications = education_fit.get("matchedQualifications", {}).get("qualifications", [])
+                missing_qualifications = education_fit.get("missingQualifications", {}).get("qualifications", [])
                 st.write("**Matched Qualifications:**")
                 st.write(", ".join(matched_qualifications) if matched_qualifications else "None")
+                st.write("**Missing Qualifications:**")
+                st.write(", ".join(missing_qualifications) if missing_qualifications else "None")
 
                 # Technological Fit Section
                 tech_fit = response_json.get("Technological Fit", {})
                 st.subheader("Technological Fit")
                 st.write(f"**Match Percentage**: {tech_fit.get('matchPercentage', 'N/A')}")
-                
+                st.write(f"**Description**: {tech_fit.get('description', 'N/A')}")
+
                 matched_technologies = tech_fit.get("matchedTechnologies", {}).get("technologies", [])
                 missing_technologies = tech_fit.get("missingTechnologies", {}).get("technologies", [])
                 st.write("**Matched Technologies:**")
@@ -172,10 +190,6 @@ if st.button("MATCH", key="match_button"):
                 st.write("**Missing Technologies:**")
                 st.write(", ".join(missing_technologies) if missing_technologies else "None")
 
-                # Additional note
-                best_fit = response_json.get("BestJobMatch", "None")  # Default to "None" if not found
-                st.write("**Best Fit Job Title:**")
-                st.write(best_fit if best_fit else "None")      
             else:
                 st.error("Failed to complete the matching process. Please try again.")
     else:

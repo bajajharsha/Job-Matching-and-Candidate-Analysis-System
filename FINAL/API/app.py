@@ -37,6 +37,8 @@ app = FastAPI(
 UPLOAD_DIR = Path("/home/harsha/Desktop/projectuploadedFiles")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+file_location = UPLOAD_DIR
+
 def save_file(file: UploadFile) -> Path:
     """Saves an uploaded file to the designated directory and returns its path."""
     file_location = UPLOAD_DIR / file.filename
@@ -79,27 +81,65 @@ def processUploadedFiles(document_text, document_type):
     """Generate a structured output for resumes or job descriptions using Google Gemini."""
     genai.configure(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
     
-    prompt = f"""
-    You are a highly advanced language model capable of understanding and analyzing {document_type}. Your task is to process the following plain text {document_type} and identify the different sections, categorizing them accordingly. The sections we are interested in are:
+    # Define the prompts for resumes and job descriptions
+    if document_type == "resume":
+        prompt = f"""
+        You are a highly advanced language model capable of understanding and analyzing resumes. Your task is to process the following plain text resume and identify the different sections, categorizing them accordingly and in detailed using all the available text in the resume. The sections we are interested in are:
 
-    1. **Personal Information**: For resumes only—Name, contact details, and any relevant links.
-    2. **Summary or Objective**: A brief overview of the candidate’s career goals (for resumes) or the role’s objectives (for JDs).
-    3. **Skills**: A list of relevant skills, including technical and soft skills.
-    4. **Experience**: Work history including job titles, companies, duration of employment (for resumes) or required experience (for JDs).
-    5. **Education**: Academic qualifications including degrees, institutions, and years of graduation (for resumes) or required qualifications (for JDs).
-    6. **Certifications**: Any relevant certifications (for resumes) or preferred qualifications (for JDs).
-    7. **Responsibilities**: Specific job responsibilities (for JDs only).
+        1. **Personal Information**: For resumes only—Name, contact details, and any relevant links.
+        2. **Summary or Objective**: A brief overview of the candidate’s career goals.
+        3. **Skills**: A list of relevant skills, including technical and soft skills and the responsibilties.
+        4. **Experience**: Work history including job titles, companies, duration of employment.
+        5. **Education**: Academic qualifications including degrees, institutions, and years of graduation.
+        6. **Certifications**: Any relevant certifications.
+        
+        Please structure the output in a clear pure python nested dictionary format only, with each section labeled accordingly. If a section is not present in the document, simply omit it from the output.
 
-    Please structure the output in a clear pure python nested dictionary format only and extra keywords without the "python" prefix and do not add lists into the format, with each section labeled accordingly. If a section is not present in the document, simply omit it from the python nested dictionary output.
+        Here is the resume text to analyze:
+        {document_text}
+        """
+        
+    elif document_type == "job description":
+        prompt = f"""
+        You are an advanced language model tasked with understanding and categorizing sections in job descriptions. Your goal is to analyze the following plain text job description and output a structured JSON object that captures the essential sections of the job description.
 
-    Here is the {document_type} text to analyze:
-    {document_text}
-    """
-    
+        Please format the output in the following JSON structure:
+
+        {{
+            "Job Description X": {{
+                "Position": "Position title",
+                "Location": "Location of the job",
+                "Job Type": "Type of employment, e.g., Full-Time, Part-Time, Volunteer",
+                "Company": "Company name",
+                "Summary": "Brief overview of the company and the role",
+                "Skills": {{
+                    "Technical Skills": "List of relevant technical skills",
+                    "Soft Skills": "List of relevant soft skills"
+                }},
+                "Experience": {{
+                    "Required": "Details about required experience"
+                }},
+                "Education": {{
+                    "Required": "Required academic qualifications"
+                }},
+                "Certifications": {{
+                    "Preferred": "Preferred certifications or qualifications"
+                }},
+                "Responsibilities": "List of primary responsibilities"
+            }}
+        }}
+
+        If any section is not present in the document, simply omit it from the JSON output.
+
+        Here is the job description text to analyze:
+        {document_text}
+        """
+
+    # Generate content using the defined prompt
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
-    # logging.info("Generated output: %s", response.text)
     return response.text
+
 
 def initialize_pinecone():
     """Initializes the Pinecone client and ensures the index exists."""
@@ -127,8 +167,8 @@ def store_in_pinecone(document, document_type):
     logging.info("Created Pinecone index for document matching.")
     embeddings_data = []
     logging.info("resume sections: " + str(document))
-    cleaned_string = document[9:-3]
-
+    cleaned_string = document[7:-3]
+    logging.info("cleaned string for adding to db")
     # Check if the document is a JD or a resume
     if document_type.lower() == "job description":
         # Assuming document is in JSON format similar to your example
@@ -230,30 +270,48 @@ def finalLLM(context):
     
     prompt = f"""
     You are an advanced AI model specialized in evaluating the alignment between a candidate’s resume and a job description. 
-    Using the provided context below, generate a detailed, frontend-ready analysis to show why a candidate is a good fit for the role. 
-    The output should be structured with easy-to-read headings and descriptions in each category (Skill Match, Experience Match, 
-    Education Fit, and Technological Fit).
+    Based on the context provided below, generate a detailed analysis demonstrating why a candidate is a suitable fit for the role. 
+    Start by identifying the best job fit for the candidate, followed by a comprehensive analysis supporting this conclusion. 
+    Structure your output with clear headings and descriptions for each category: Best Job Match, Skill Match, Experience Match, 
+    Education Fit, and Technological Fit.
 
-    The format should be in structured JSON for direct frontend display, with clear labels and explanations for each section:
+    The output should be formatted in structured JSON for direct frontend integration, ensuring clear labels and explanations for each section:
 
-    1. **Skill Match**: Provide a percentage indicating the overlap between required skills in the job description and those 
-       in the candidate’s resume. Include a list of matched skills and missing skills, with labels to make it readable on a 
-       frontend display.
+    **Best Job Match**: 
+    - Identify the job description that best aligns with the candidate's profile. 
+    - Provide a detailed explanation, including analytics on how the candidate’s skills, experience, and qualifications align with the job requirements. 
+    - Highlight key reasons supporting this match, emphasizing any standout qualifications or experiences that make this job the ideal fit.
+
+    1. **Skill Match**: 
+       - Indicate the percentage of overlap between the required skills in the job description and those in the candidate’s resume. 
+       - Include a list of matched skills and missing skills, labeled for readability on the frontend.
+       
     2. **Experience Match**: 
        - Calculate and present the overall relevance percentage of the candidate's experience to the job’s requirements.
-       - List each relevant job, showing the job title, relevance score, and a brief explanation of the overlap in responsibilities.
-       - Include a list of job responsibilities that match those required by the role.
+       - For each relevant job, include the job title, relevance score, and a brief explanation of the overlap in responsibilities.
+       - List job responsibilities that match those required by the role.
+
     3. **Education Fit**: 
-       - Provide a match percentage for education, indicating how well the candidate’s educational background aligns with 
-         the job’s requirements.
-       - List matched and missing qualifications with brief descriptions where necessary.
+       - Provide a percentage for education match, indicating how well the candidate’s educational background aligns with the job’s requirements.
+       - List matched and missing qualifications, providing brief descriptions where necessary.
+
     4. **Technological Fit**: 
-       - Present a percentage score indicating the overlap between required and possessed technologies.
-       - List matched technologies and missing technologies, if any.
+       - Present a percentage score for the overlap between required and possessed technologies.
+       - Include lists of matched and missing technologies.
 
     Output the information in the following structured JSON format for direct frontend display:
 
     {{
+        "BestJobMatch": {{
+            "jobDescription": "The job description the resume aligns with best.",
+            "reason": "A detailed explanation of why this job is the best fit based on the analysis.",
+            "analytics": {{
+                "skillsAnalysis": "Analysis of how the candidate's skills match the job requirements.",
+                "experienceAnalysis": "Analysis of how the candidate's experience aligns with job responsibilities.",
+                "educationAnalysis": "Analysis of how the candidate's education supports the job requirements.",
+                "technologyAnalysis": "Analysis of how the candidate's technological expertise fits the job needs."
+            }}
+        }},
         "Skill Match": {{
             "matchPercentage": "X%",
             "description": "Percentage of required skills possessed by the candidate.",
@@ -314,22 +372,25 @@ def finalLLM(context):
                 "label": "Missing Technologies",
                 "technologies": ["Technology 3"]
             }}
-        }},
-        "BestJobMatch": {{
-            The bestt job match based on the analysis
         }}
     }}
     
-    FInally give a detailed and on point note on which job description the resume is best suited for based on the analysis in the json itself.
-    The final ouptput should be in JSON format only and no extra keywords should be added to the format. 
+    Ensure all sections are detailed, particularly the Best Job Match section, which should include a thorough explanation of why this job is the best fit for the candidate based on the provided analysis. The final output should be strictly in JSON format without any additional keywords or text. 
 
     Context: {context}
     """
-
     model = genai.GenerativeModel("gemini-1.5-flash")
     response = model.generate_content(prompt)
     logging.info("Generated final output: %s", response.text)
+    
     return response.text
+
+def delete_index_if_exists(index_name):
+    """Delete the index if it exists."""
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+    if index_name in [index.name for index in pc.list_indexes()]:
+        pc.delete_index(index_name)
+        logging.info(f"Deleted index: {index_name}")
 
 @app.post("/upload/")
 async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = File(...)):
@@ -353,11 +414,12 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
             raise HTTPException(status_code=400, detail="Unsupported job description file type.")
         
         all_jd_documents.extend(jd_documents)  # Extend to combine text from all job descriptions
-        
-        jd_texts = " ".join(doc.page_content for doc in all_jd_documents)
-        jd_sections = processUploadedFiles(jd_texts, document_type="job description")
-        # logging.info("Job description sections: " + str(jd_sections))
     
+    logging.info("ALL jds:::: " , all_jd_documents)
+    
+    jd_texts = " ".join(doc.page_content for doc in all_jd_documents)
+    jd_sections = processUploadedFiles(jd_texts, document_type="job description")
+    # logging.info("Job description sections: " + str(jd_sections))
     # Store job description sections in Pinecone
     store_in_pinecone(jd_sections, document_type="job description")
     
@@ -373,9 +435,13 @@ async def upload_files(resume: UploadFile = File(...), jds: List[UploadFile] = F
     
     # call final llm
     final_output = finalLLM(context)
+    final_result = json.loads(final_output[7:-3])
     
-    return JSONResponse(content={"detail": final_output[7:-3]})    
-
+    # Delete pinecone index after processing the request 
+    delete_index_if_exists("job-matching")
+    # os.remove(file_location)
+    
+    return final_result
     
 
 
